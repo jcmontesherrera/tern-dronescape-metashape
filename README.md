@@ -1,0 +1,2 @@
+# tern-drone-metashape
+A Python-based pipeline for processing TERN drone imagery using Agisoft Metashape. This repository contains scripts to process both RGB and multispectral aerial imagery, including image alignment, model building, reflectance panel detection, and multispectral band configuration. The pipeline is specifically designed to handle TERN's standardized directory structure and data formats, ensuring consistent processing of aerial survey data for ecological research.
