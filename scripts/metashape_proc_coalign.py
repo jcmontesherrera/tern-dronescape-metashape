@@ -533,15 +533,33 @@ def main():
     multispec_chunk.label = "multispec"
     print("Created duplicate chunk: multispec")
 
-    # Remove multispec cameras from RGB chunk
+    # Collect cameras to remove from each chunk
+    rgb_to_remove = []
+    multispec_to_remove = []
+
+    # Build lists of cameras to remove
     for camera in rgb_chunk.cameras:
-        if camera.label.startswith('IMG_'): # multispec cameras
-            rgb_chunk.remove(camera)
-    
-    # Remove RGB cameras from multispec chunk
+        # Skip calibration images
+        if camera.group is not None and camera.group.label == 'Calibration images':
+            continue
+        if camera.label.startswith('IMG_'):  # multispec cameras
+            multispec_to_remove.append(camera)
+
     for camera in multispec_chunk.cameras:
-        if camera.label.startswith('DJI_'): # RGB cameras
-            multispec_chunk.remove(camera)
+        # Skip calibration images
+        if camera.group is not None and camera.group.label == 'Calibration images':
+            continue
+        if camera.label.startswith('DJI_'):  # RGB cameras
+            rgb_to_remove.append(camera)
+
+    # Remove cameras from chunks
+    print(f"Removing {len(rgb_to_remove)} multispec cameras from RGB chunk...")
+    for camera in multispec_to_remove:
+        rgb_chunk.remove(camera)
+
+    print(f"Removing {len(rgb_to_remove)} RGB cameras from multispec chunk...")
+    for camera in rgb_to_remove:
+        multispec_chunk.remove(camera)
 
     # Save project after filtering
     doc.save()
