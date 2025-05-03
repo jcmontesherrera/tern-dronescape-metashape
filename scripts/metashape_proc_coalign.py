@@ -527,37 +527,25 @@ def main():
     print(f"Project saved as {project_path}. Chunk CRS: EPSG::{crs_code}")
 
     # Duplicate the 'all_images' chunk
-    all_images_chunk = doc.chunk
-    duplicate_chunk = all_images_chunk.copy()
-    duplicate_chunk.label = "all_images_duplicate"
-    print("Created duplicate chunk: all_images_duplicate")
+    rgb_chunk = doc.chunk
+    multispec_chunk = rgb_chunk.copy()
+    rgb_chunk.label = "rgb"
+    multispec_chunk.label = "multispec"
+    print("Created duplicate chunk: multispec")
 
-    # # Rename and filter chunks
-    # print("\nFiltering and renaming chunks...")
+    # Remove multispec cameras from RGB chunk
+    for camera in rgb_chunk.cameras:
+        if camera.label.startswith('IMG_'): # multispec cameras
+            rgb_chunk.remove(camera)
     
-    # # Rename original chunk to 'rgb' and filter for RGB images
-    # all_images_chunk.label = "rgb"
-    # rgb_cameras_to_keep = []
-    # for camera in all_images_chunk.cameras:
-    #     if camera.label.startswith('DJI_'):
-    #         rgb_cameras_to_keep.append(camera)
-    #     else:
-    #         all_images_chunk.remove(camera)
-    # print(f"RGB chunk: Kept {len(rgb_cameras_to_keep)} RGB cameras")
+    # Remove RGB cameras from multispec chunk
+    for camera in multispec_chunk.cameras:
+        if camera.label.startswith('DJI_'): # RGB cameras
+            multispec_chunk.remove(camera)
 
-    # # Rename duplicate chunk to 'multispec' and filter for multispectral images
-    # duplicate_chunk.label = "multispec"
-    # multispec_cameras_to_keep = []
-    # for camera in duplicate_chunk.cameras:
-    #     if camera.label.startswith('IMG_'):
-    #         multispec_cameras_to_keep.append(camera)
-    #     else:
-    #         duplicate_chunk.remove(camera)
-    # print(f"Multispec chunk: Kept {len(multispec_cameras_to_keep)} multispectral cameras")
-
-    # # Save project after filtering
-    # doc.save()
-    # print("Project saved with filtered chunks")
+    # Save project after filtering
+    doc.save()
+    print("Project saved with filtered chunks")
 
 if __name__ == "__main__":
     main()
