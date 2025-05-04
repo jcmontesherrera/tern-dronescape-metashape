@@ -430,11 +430,13 @@ def main():
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Initialize Metashape project with all images in one chunk.")
-    parser.add_argument('--imagery_dir', required=True, help='Path to YYYYMMDD/imagery/ directory')
-    parser.add_argument('--crs', default="4326", help='EPSG code for target projected CRS (default: 4326, WGS84)')
-    parser.add_argument('--out', required=True, help='Directory to save the Metashape project')
-    parser.add_argument('--smooth', choices=['low', 'medium', 'high'], default='low',
+    parser.add_argument('-imagery_dir', required=True, help='Path to YYYYMMDD/imagery/ directory')
+    parser.add_argument('-crs', default="4326", help='EPSG code for target projected CRS (default: 4326, WGS84)')
+    parser.add_argument('-out', required=True, help='Directory to save the Metashape project')
+    parser.add_argument('-smooth', choices=['low', 'medium', 'high'], default='low',
                       help='Smoothing strength for the model (default: low)')
+    parser.add_argument('-sun_sensor', action='store_true', default=False,
+                      help='Whether to use sun sensor data for reflectance calibration (default: False)')
     args = parser.parse_args()
 
     # Extract YYYYMMDD and plot from input path
@@ -553,7 +555,7 @@ def main():
             rgb_to_remove.append(camera)
 
     # Remove cameras from chunks
-    print(f"Removing {len(rgb_to_remove)} multispec cameras from RGB chunk...")
+    print(f"Removing {len(multispec_to_remove)} multispec cameras from RGB chunk...")
     for camera in multispec_to_remove:
         rgb_chunk.remove(camera)
 
@@ -564,6 +566,92 @@ def main():
     # Save project after filtering
     doc.save()
     print("Project saved with filtered chunks")
+
+    # # Stop script here. User to click 'Resume Processing' once following steps are complete.
+    # # see resume_proc() for processing steps.
+    print(
+        "Step 1. In the Workspace pane under multispec chunk open Calibration images folder. Select and remove images not to be used for calibration.")
+    print(
+        "Step 2. Press the 'Show Masks' icon in the toolbar and inspect the masks on calibration images.")
+    print(
+        "Step 3. Select in top menu Tools > Calibrate Reflectance > Use 1 to 5 images for calibration.")
+    print(
+        "Step 4. Ensure there's a csv file of the calibration panel loaded.  Press Cancel.")
+    print(
+        "Note: The csv of the calibration panel will have to be loaded if this is the first run on the machine. See the protocol for more information.")
+
+    print(
+        "Complete Steps 1 to 4 and press 'Resume Processing' to continue. Reflectance calibration will be completed in the script.")
+    print("###########################")
+    print("###########################")
+
+    label = "Resume processing"
+    Metashape.app.removeMenuItem(label)
+    Metashape.app.addMenuItem(label, resume_proc)
+    Metashape.app.messageBox(
+        "Complete Steps 1 to 4 listed on the Console tab and then click on 'Resume Processing' in the toolbar")
+
+    # Calibrate reflectance 
+    multispec_chunk.calibrateReflectance(use_reflectance_panels=True, use_sun_sensor=args.sun_sensor)
+
+    # Raster transform multispectral images
+    print("Updating Raster Transform for relative reflectance")
+    raster_transform_formula = []
+    
+    # Get sensors sorted by layer_index
+    sorted_sensors = sorted([sensor for sensor in multispec_sensors if sensor.layer_index < 10], 
+                          key=lambda x: x.layer_index)
+    
+    # Create transform formula for first 10 bands only, excluding panchro
+    for sensor in sorted_sensors:
+        # Use the actual layer index for the band reference
+        band_idx = sensor.layer_index
+        raster_transform_formula.append(f"B{band_idx}/32768")
+
+    multispec_chunk.raster_transform.formula = raster_transform_formula
+    multispec_chunk.raster_transform.calibrateRange()
+    multispec_chunk.raster_transform.enabled = True
+    
+    doc.save()
+    print(f"Applied raster transform formulas: {raster_transform_formula}")
+
+    # Build orthomosaics
+    print("Building orthomosaics...")
+    # rgb_chunk.buildOrthomosaic(surface_data=Metashape.DataSource.ModelData, refine_seamlines=True)
+    # doc.save()
+    multispec_chunk.buildOrthomosaic(surface_data=Metashape.DataSource.ModelData, refine_seamlines=True)
+    doc.save()
+
+    # # Round resolution to 2 decimal places
+    # rgb_res_xy = round(rgb_chunk.orthomosaic.resolution, 2)
+    # multispec_res_xy = round(multispec_chunk.orthomosaic.resolution, 2)
+
+    # # Define output path for RGB orthomosaic
+    # # Example output path: 
+    # # /path/to/imagery_dir/rgb/level1_proc/20250415_PLOTID_rgb_ortho_02.tif
+    # rgb_dir = Path(imagery_dir) / "rgb" / "level1_proc"
+    # rgb_ortho_path = rgb_dir / f"{yyyymmdd}_{plot}_rgb_ortho_{res_xy.split('.')[1]}.tif"
+
+    # # Create output directory if it doesn't exist
+    # rgb_dir.mkdir(parents=True, exist_ok=True)
+
+    # compression = Metashape.ImageCompression()
+    # compression.tiff_compression = Metashape.ImageCompression.TiffCompressionLZW  # Should be NONE? default on Metashape
+    # compression.tiff_big = True
+    # compression.tiff_tiled = True
+    # compression.tiff_overviews = True
+
+    # # Export orthomosaic
+    # rgb_chunk.exportOrthomosaic(path=str(rgb_ortho_path), resolution_x=rgb_res_xy, resolution_y=rgb_res_xy,
+    #                        image_format=Metashape.ImageFormatTIFF, save_alpha=False, 
+    #                        source_data=Metashape.OrthomosaicData, image_compression=compression)
+    # print(f"RGB orthomosaic saved to: {rgb_ortho_path}")
+
+    # multispec_chunk.exportRaster(path=str(ortho_file), resolution_x=multispec_res_xy, 
+    #                     resolution_y=multispec_res_xy, image_format=Metashape.ImageFormatTIFF,
+    #                     raster_transform=Metashape.RasterTransformValue, save_alpha=False, 
+    #                     source_data=Metashape.OrthomosaicData, image_compression=compression)
+    # print(f"Multispectral orthomosaic saved to: {multispec_ortho_path}")
 
 if __name__ == "__main__":
     main()
