@@ -493,8 +493,8 @@ def resume_proc():
     calibrate_reflectance_and_transform(multispec_chunk, multispec_sensors, doc, args)
     
     # Build orthomosaics
-    build_rgb_orthomosaic(rgb_chunk, doc)
-    build_multispec_orthomosaic(multispec_chunk, doc)
+    # build_rgb_orthomosaic(rgb_chunk, doc)
+    # build_multispec_orthomosaic(multispec_chunk, doc)
     
     print("Processing completed successfully!")
 
