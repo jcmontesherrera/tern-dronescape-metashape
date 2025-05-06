@@ -25,7 +25,7 @@ from metashape.utils import find_images
 from metashape.camera_ops import configure_multispectral_camera
 from metashape.processing import detect_reflectance_panels, merge_chunks
 from metashape.markers import find_marker_files, load_markers
-from metashape.image_utils import find_filtered_images, filter_images_by_timestamp
+from metashape.image_utils import find_filtered_images, filter_images_by_timestamp, filter_multispec_by_flight_pattern
 
 def main():
     # Set up GPU acceleration
@@ -40,6 +40,10 @@ def main():
                       help='Buffer in seconds to add to RGB time window (default: 43200 seconds = 12 hours)')
     parser.add_argument('-skip_markers', action='store_true', 
                       help='Skip loading markers even if .mrk files are found')
+    parser.add_argument('-filter_method', choices=['time', 'spatial', 'both'], default='spatial',
+                      help='Method to filter multispectral images (default: spatial)')
+    parser.add_argument('-spatial_threshold', type=float, default=0.2,
+                      help='Spatial threshold for flight pattern filtering (default: 0.2)')
     args = parser.parse_args()
 
     # Extract YYYYMMDD and plot from input path
@@ -148,13 +152,22 @@ def main():
     print("Chunks merged successfully into 'all_images' chunk")
     
     #-------------------------------------------
-    # Step 2: Filter multispectral images based on RGB capture times
+    # Step 2: Filter multispectral images based on chosen method
     #-------------------------------------------
-    filter_images_by_timestamp(merged_chunk, time_buffer_seconds=args.time_buffer)
+    if args.filter_method == 'time':
+        # Use timestamp-based filtering
+        filter_images_by_timestamp(merged_chunk, time_buffer_seconds=args.time_buffer)
+    elif args.filter_method == 'spatial':
+        # Use spatial pattern-based filtering
+        filter_multispec_by_flight_pattern(merged_chunk, spatial_threshold=args.spatial_threshold)
+    elif args.filter_method == 'both':
+        # Use both methods in sequence
+        filter_multispec_by_flight_pattern(merged_chunk, spatial_threshold=args.spatial_threshold)
+        filter_images_by_timestamp(merged_chunk, time_buffer_seconds=args.time_buffer)
     
     # Save project after filtering images
     doc.save()
-    print("Filtered multispectral images based on RGB capture times")
+    print("Filtered multispectral images based on RGB flight pattern")
     print(f"Project saved as {project_path}. Chunk CRS: EPSG::{crs_code}")
     
     print("Script completed successfully. Project is now ready for alignment.")
@@ -164,4 +177,4 @@ def main():
     print("3. Building orthomosaic")
 
 if __name__ == "__main__":
-    main() 
+    main()

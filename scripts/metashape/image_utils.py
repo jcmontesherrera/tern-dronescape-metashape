@@ -1,5 +1,7 @@
 import os
 import datetime
+import math
+import numpy as np
 import Metashape
 
 def find_filtered_images(folder, extensions=(), exclude_patterns=()):
@@ -125,4 +127,135 @@ def filter_images_by_timestamp(chunk, time_buffer_seconds=43200):
         print(f"Removing {len(cameras_to_remove)} multispectral cameras outside RGB time window")
         chunk.remove(cameras_to_remove)
     else:
-        print("All multispectral cameras are within the RGB time window") 
+        print("All multispectral cameras are within the RGB time window")
+
+def filter_multispec_by_flight_pattern(chunk, spatial_threshold=0.2, keep_ratio=0.8):
+    """
+    Filter multispectral images by analyzing the RGB flight pattern using both
+    spatial and sequence information to determine which images should be kept.
+    This approach is more robust to time differences between cameras.
+    
+    Args:
+        chunk: Metashape chunk containing both RGB and multispectral images
+        spatial_threshold: Distance threshold as fraction of total area (default: 0.2)
+        keep_ratio: Minimum ratio of images to keep (default: 0.8)
+    
+    Returns:
+        Number of multispectral images removed
+    """
+    print("Filtering multispectral images based on RGB flight pattern...")
+    
+    # 1. Separate RGB and multispectral cameras
+    rgb_cameras = []
+    ms_cameras = []
+    
+    for camera in chunk.cameras:
+        # Skip disabled cameras
+        if not camera.enabled:
+            continue
+            
+        # Verify camera has reference (position) data
+        if not camera.reference.location:
+            continue
+            
+        # Group by camera type
+        if camera.label.startswith("DJI_"):
+            rgb_cameras.append(camera)
+        elif camera.label.startswith("IMG_"):
+            ms_cameras.append(camera)
+    
+    if not rgb_cameras:
+        print("No RGB cameras found with position data. Cannot determine flight pattern.")
+        return 0
+        
+    if not ms_cameras:
+        print("No multispectral cameras found. Nothing to filter.")
+        return 0
+    
+    print(f"Analyzing flight pattern of {len(rgb_cameras)} RGB images")
+    
+    # 2. Determine the main survey area from RGB cameras
+    rgb_coords = []
+    for camera in rgb_cameras:
+        pos = camera.reference.location
+        rgb_coords.append((pos.x, pos.y, pos.z))
+    
+    # Convert to numpy array for easier calculations
+    rgb_coords = np.array(rgb_coords)
+    
+    # 3. Find the bounding box of the main flight area
+    # Exclude outliers by using percentiles instead of min/max
+    x_min, y_min, z_min = np.percentile(rgb_coords, 5, axis=0)
+    x_max, y_max, z_max = np.percentile(rgb_coords, 95, axis=0)
+    
+    # Calculate the main area dimensions
+    width = x_max - x_min
+    height = y_max - y_min
+    depth = z_max - z_min
+    
+    # Expand the bounding box by the spatial threshold
+    x_min -= width * spatial_threshold
+    x_max += width * spatial_threshold
+    y_min -= height * spatial_threshold
+    y_max += height * spatial_threshold
+    z_min -= depth * spatial_threshold
+    z_max += depth * spatial_threshold
+    
+    print(f"Main flight area: X({x_min:.2f} to {x_max:.2f}), Y({y_min:.2f} to {y_max:.2f}), Z({z_min:.2f} to {z_max:.2f})")
+    
+    # 4. Determine which multispectral images fall within this area
+    ms_in_area = []
+    ms_outside_area = []
+    
+    for camera in ms_cameras:
+        pos = camera.reference.location
+        if (x_min <= pos.x <= x_max and
+            y_min <= pos.y <= y_max and
+            z_min <= pos.z <= z_max):
+            ms_in_area.append(camera)
+        else:
+            ms_outside_area.append(camera)
+    
+    in_area_ratio = len(ms_in_area) / len(ms_cameras)
+    
+    # 5. Check if we have enough images in the area
+    # If too many images would be removed, the bounding box might be too restrictive
+    if in_area_ratio < keep_ratio:
+        print(f"Warning: Only {in_area_ratio:.2%} of multispectral images are within the main flight area.")
+        print("This might indicate that the spatial filter is too restrictive.")
+        print("Trying alternative approach based on altitude...")
+        
+        # 5b. Alternative: Filter based on altitude only
+        # Calculate the mean altitude of RGB cameras
+        rgb_mean_alt = np.mean(rgb_coords[:, 2])
+        rgb_std_alt = np.std(rgb_coords[:, 2])
+        
+        # Set an altitude threshold
+        alt_range = rgb_std_alt * 2  # 2 standard deviations
+        alt_min = rgb_mean_alt - alt_range
+        alt_max = rgb_mean_alt + alt_range
+        
+        print(f"RGB altitude range: {alt_min:.2f} to {alt_max:.2f} (mean: {rgb_mean_alt:.2f}, std: {rgb_std_alt:.2f})")
+        
+        # Re-filter based on altitude only
+        ms_in_area = []
+        ms_outside_area = []
+        
+        for camera in ms_cameras:
+            pos = camera.reference.location
+            if alt_min <= pos.z <= alt_max:
+                ms_in_area.append(camera)
+            else:
+                ms_outside_area.append(camera)
+        
+        in_area_ratio = len(ms_in_area) / len(ms_cameras)
+        print(f"After altitude filtering: {in_area_ratio:.2%} of multispectral images are within operational altitude range")
+    
+    # 6. Remove multispectral images outside the main area
+    if ms_outside_area:
+        print(f"Removing {len(ms_outside_area)} multispectral images outside the main flight area")
+        chunk.remove(ms_outside_area)
+    else:
+        print("All multispectral images are within the main flight area")
+    
+    return len(ms_outside_area) 
