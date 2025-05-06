@@ -19,10 +19,10 @@ import sys
 from pathlib import Path
 import Metashape
 
-from metashape.gpu_setup import setup_gpu
-from metashape.utils import find_images
-from metashape.camera_ops import configure_multispectral_camera
-from metashape.processing import detect_reflectance_panels
+from functions.gpu_setup import setup_gpu
+from functions.utils import find_images
+from functions.camera_ops import configure_multispectral_camera
+from functions.processing import detect_reflectance_panels
 
 def find_filtered_images(folder, extensions=(), exclude_patterns=()):
     """
