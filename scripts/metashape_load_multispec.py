@@ -17,12 +17,14 @@ Project will be named as "YYYYMMDD-plot.psx"
 import argparse
 import os
 import sys
+import datetime
+import re
 from pathlib import Path
 import Metashape
 
 from metashape.gpu_setup import setup_gpu
 from metashape.utils import find_images
-from metashape.camera_ops import configure_multispectral_camera, remove_images_outside_rgb_times
+from metashape.camera_ops import configure_multispectral_camera
 from metashape.processing import detect_reflectance_panels, merge_chunks
 
 def find_filtered_images(folder, extensions=(), exclude_patterns=()):
@@ -56,6 +58,176 @@ def find_filtered_images(folder, extensions=(), exclude_patterns=()):
                 image_list.append(os.path.join(root, fname))
     return image_list
 
+def filter_images_by_timestamp(chunk, time_buffer_seconds=30):
+    """
+    Filter multispectral images based on RGB capture times 
+    with a time buffer to ensure adequate overlap.
+    
+    Args:
+        chunk: Metashape chunk containing both RGB and multispectral images
+        time_buffer_seconds: Buffer in seconds to add to the RGB time window (default: 30)
+    """
+    print("Filtering multispectral images based on RGB capture times...")
+    
+    # Collect RGB timestamps
+    rgb_timestamps = []
+    rgb_cameras = []
+    
+    # Collect multispectral timestamps
+    ms_timestamps = []
+    ms_cameras = []
+    
+    # Find cameras and their timestamps
+    for camera in chunk.cameras:
+        # Skip disabled cameras
+        if not camera.enabled:
+            continue
+            
+        # Get camera timestamp from metadata
+        if not camera.photo.meta:
+            continue
+            
+        timestamp_str = None
+        if 'Exif/DateTimeOriginal' in camera.photo.meta:
+            timestamp_str = camera.photo.meta['Exif/DateTimeOriginal']
+        elif 'Xmp/DateTimeOriginal' in camera.photo.meta:
+            timestamp_str = camera.photo.meta['Xmp/DateTimeOriginal']
+            
+        if not timestamp_str:
+            continue
+            
+        try:
+            # Try different timestamp formats
+            try:
+                dt = datetime.datetime.strptime(timestamp_str, "%Y:%m:%d %H:%M:%S")
+            except ValueError:
+                # Alternative format sometimes found in image metadata
+                dt = datetime.datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
+
+            # Check prefix to determine camera type
+            if camera.label.startswith("DJI_"):
+                rgb_timestamps.append(dt)
+                rgb_cameras.append(camera)
+            elif camera.label.startswith("IMG_"):
+                ms_timestamps.append(dt)
+                ms_cameras.append(camera)
+        except ValueError:
+            print(f"Could not parse timestamp for camera {camera.label}: {timestamp_str}")
+    
+    if not rgb_timestamps:
+        print("No timestamps found for RGB cameras. Skipping filtering.")
+        return
+        
+    if not ms_timestamps:
+        print("No timestamps found for multispectral cameras. Skipping filtering.")
+        return
+    
+    # Find min and max RGB timestamps
+    min_rgb_time = min(rgb_timestamps)
+    max_rgb_time = max(rgb_timestamps)
+    
+    # Add buffer to each end
+    buffer = datetime.timedelta(seconds=time_buffer_seconds)
+    min_rgb_time -= buffer
+    max_rgb_time += buffer
+    
+    print(f"RGB capture time window: {min_rgb_time} to {max_rgb_time}")
+    print(f"With {time_buffer_seconds} second buffer on each end")
+    
+    # List of multispec cameras to disable
+    cameras_to_remove = []
+    
+    # Check each multispectral camera
+    for i, camera in enumerate(ms_cameras):
+        timestamp = ms_timestamps[i]
+        
+        # If outside RGB time window, mark for removal
+        if timestamp < min_rgb_time or timestamp > max_rgb_time:
+            cameras_to_remove.append(camera)
+    
+    # Remove cameras outside time window
+    if cameras_to_remove:
+        print(f"Removing {len(cameras_to_remove)} multispectral cameras outside RGB time window")
+        chunk.remove(cameras_to_remove)
+    else:
+        print("All multispectral cameras are within the RGB time window")
+
+def read_marker_file(marker_file):
+    """
+    Read Agisoft marker file and return markers with their coordinates
+    
+    Args:
+        marker_file: Path to .mrk file
+        
+    Returns:
+        Dictionary of marker names with coordinates
+    """
+    markers = {}
+    with open(marker_file, 'r') as f:
+        lines = f.readlines()
+        
+    for line in lines:
+        if line.startswith('#'):
+            continue
+            
+        parts = line.strip().split(',')
+        if len(parts) >= 4:
+            name = parts[0]
+            x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+            markers[name] = (x, y, z)
+    
+    return markers
+
+def find_marker_files(folder):
+    """
+    Find .mrk marker files in the RGB directory
+    
+    Args:
+        folder: Path to search for marker files
+        
+    Returns:
+        List of marker file paths
+    """
+    marker_files = []
+    for root, _, files in os.walk(folder):
+        for fname in files:
+            if fname.lower().endswith('.mrk'):
+                marker_files.append(os.path.join(root, fname))
+    return marker_files
+
+def load_markers(chunk, mrk_files):
+    """
+    Load markers from .mrk files into the chunk
+    
+    Args:
+        chunk: Metashape chunk
+        mrk_files: List of .mrk file paths
+        
+    Returns:
+        True if markers were loaded, False otherwise
+    """
+    if not mrk_files:
+        print("No marker files found")
+        return False
+        
+    print(f"Loading {len(mrk_files)} marker files")
+    for mrk_file in mrk_files:
+        markers = read_marker_file(mrk_file)
+        if not markers:
+            print(f"No markers found in {mrk_file}")
+            continue
+            
+        print(f"Found {len(markers)} markers in {mrk_file}")
+        
+        # Add markers to the chunk
+        for name, coords in markers.items():
+            marker = chunk.addMarker()
+            marker.label = name
+            marker.reference.location = Metashape.Vector(coords)
+            marker.reference.enabled = True
+    
+    return True
+
 def main():
     # Set up GPU acceleration
     setup_gpu()
@@ -65,6 +237,8 @@ def main():
     parser.add_argument('-imagery_dir', required=True, help='Path to YYYYMMDD/imagery/ directory')
     parser.add_argument('-crs', default="4326", help='EPSG code for target projected CRS (default: 4326, WGS84)')
     parser.add_argument('-out', required=True, help='Directory to save the Metashape project')
+    parser.add_argument('-time_buffer', type=int, default=30, 
+                      help='Buffer in seconds to add to RGB time window (default: 30)')
     args = parser.parse_args()
 
     # Extract YYYYMMDD and plot from input path
@@ -89,6 +263,11 @@ def main():
     
     # Find all multispectral images (tif files), excluding Panchro images (ending with _6.tif)
     multispec_images = find_filtered_images(multispec_dir, extensions=('.tif', '.tiff'), exclude_patterns=('_6.tif',))
+    
+    # Find marker files in RGB directory
+    marker_files = find_marker_files(rgb_dir)
+    if marker_files:
+        print(f"Found {len(marker_files)} marker files in {rgb_dir}")
 
     if not rgb_images:
         sys.exit(f"No RGB images found in {rgb_dir}")
@@ -131,6 +310,10 @@ def main():
     # Configure multispectral camera band indices
     configure_multispectral_camera(multispec_chunk)
     
+    # Load markers if available
+    if marker_files:
+        load_markers(rgb_chunk, marker_files)
+
     # Detect reflectance panels in multispectral chunk
     detect_reflectance_panels(multispec_chunk)
 
@@ -156,14 +339,13 @@ def main():
     print("Chunks merged successfully into 'all_images' chunk")
     
     #-------------------------------------------
-    # Step 2: Remove images outside RGB capture times
+    # Step 2: Filter multispectral images based on RGB capture times
     #-------------------------------------------
-    print("Removing multispectral images outside RGB capture times...")
-    remove_images_outside_rgb_times(merged_chunk)
+    filter_images_by_timestamp(merged_chunk, time_buffer_seconds=args.time_buffer)
     
     # Save project after filtering images
     doc.save()
-    print("Removed multispectral images outside RGB capture times")
+    print("Filtered multispectral images based on RGB capture times")
     print(f"Project saved as {project_path}. Chunk CRS: EPSG::{crs_code}")
     
     print("Script completed successfully. Project is now ready for alignment.")
