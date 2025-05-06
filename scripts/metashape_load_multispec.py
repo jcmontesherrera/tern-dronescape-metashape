@@ -26,6 +26,7 @@ from metashape.gpu_setup import setup_gpu
 from metashape.utils import find_images
 from metashape.camera_ops import configure_multispectral_camera
 from metashape.processing import detect_reflectance_panels, merge_chunks
+from metashape.markers import find_marker_files, load_markers
 
 def find_filtered_images(folder, extensions=(), exclude_patterns=()):
     """
@@ -152,82 +153,6 @@ def filter_images_by_timestamp(chunk, time_buffer_seconds=30):
     else:
         print("All multispectral cameras are within the RGB time window")
 
-def read_marker_file(marker_file):
-    """
-    Read Agisoft marker file and return markers with their coordinates
-    
-    Args:
-        marker_file: Path to .mrk file
-        
-    Returns:
-        Dictionary of marker names with coordinates
-    """
-    markers = {}
-    with open(marker_file, 'r') as f:
-        lines = f.readlines()
-        
-    for line in lines:
-        if line.startswith('#'):
-            continue
-            
-        parts = line.strip().split(',')
-        if len(parts) >= 4:
-            name = parts[0]
-            x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
-            markers[name] = (x, y, z)
-    
-    return markers
-
-def find_marker_files(folder):
-    """
-    Find .mrk marker files in the RGB directory
-    
-    Args:
-        folder: Path to search for marker files
-        
-    Returns:
-        List of marker file paths
-    """
-    marker_files = []
-    for root, _, files in os.walk(folder):
-        for fname in files:
-            if fname.lower().endswith('.mrk'):
-                marker_files.append(os.path.join(root, fname))
-    return marker_files
-
-def load_markers(chunk, mrk_files):
-    """
-    Load markers from .mrk files into the chunk
-    
-    Args:
-        chunk: Metashape chunk
-        mrk_files: List of .mrk file paths
-        
-    Returns:
-        True if markers were loaded, False otherwise
-    """
-    if not mrk_files:
-        print("No marker files found")
-        return False
-        
-    print(f"Loading {len(mrk_files)} marker files")
-    for mrk_file in mrk_files:
-        markers = read_marker_file(mrk_file)
-        if not markers:
-            print(f"No markers found in {mrk_file}")
-            continue
-            
-        print(f"Found {len(markers)} markers in {mrk_file}")
-        
-        # Add markers to the chunk
-        for name, coords in markers.items():
-            marker = chunk.addMarker()
-            marker.label = name
-            marker.reference.location = Metashape.Vector(coords)
-            marker.reference.enabled = True
-    
-    return True
-
 def main():
     # Set up GPU acceleration
     setup_gpu()
@@ -239,6 +164,8 @@ def main():
     parser.add_argument('-out', required=True, help='Directory to save the Metashape project')
     parser.add_argument('-time_buffer', type=int, default=30, 
                       help='Buffer in seconds to add to RGB time window (default: 30)')
+    parser.add_argument('-skip_markers', action='store_true', 
+                      help='Skip loading markers even if .mrk files are found')
     args = parser.parse_args()
 
     # Extract YYYYMMDD and plot from input path
@@ -265,9 +192,11 @@ def main():
     multispec_images = find_filtered_images(multispec_dir, extensions=('.tif', '.tiff'), exclude_patterns=('_6.tif',))
     
     # Find marker files in RGB directory
-    marker_files = find_marker_files(rgb_dir)
-    if marker_files:
-        print(f"Found {len(marker_files)} marker files in {rgb_dir}")
+    marker_files = []
+    if not args.skip_markers:
+        marker_files = find_marker_files(rgb_dir)
+        if marker_files:
+            print(f"Found {len(marker_files)} marker files in {rgb_dir}")
 
     if not rgb_images:
         sys.exit(f"No RGB images found in {rgb_dir}")
@@ -311,8 +240,14 @@ def main():
     configure_multispectral_camera(multispec_chunk)
     
     # Load markers if available
-    if marker_files:
-        load_markers(rgb_chunk, marker_files)
+    if marker_files and not args.skip_markers:
+        try:
+            markers_loaded = load_markers(rgb_chunk, marker_files)
+            if markers_loaded > 0:
+                print(f"Successfully loaded {markers_loaded} markers from .mrk files")
+        except Exception as e:
+            print(f"Warning: Failed to load markers: {e}")
+            print("Continuing without markers")
 
     # Detect reflectance panels in multispectral chunk
     detect_reflectance_panels(multispec_chunk)
