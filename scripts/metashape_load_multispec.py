@@ -141,10 +141,14 @@ def main():
 
     # Save project
     doc.save()
+
+    print("Merging RGB and multispectral chunks...")
+    merged_chunk = merge_chunks(doc, rgb_chunk, multispec_chunk, rgb_images)
+    merged_chunk.label = "all_images"
+
     print(f"Project saved as {project_path}. Chunk CRS: EPSG::{crs_code}")
     print("Successfully loaded RGB and multispectral images into separate chunks.")
     print("Next steps would include:")
-    print("1. Merging the RGB and multispectral chunks")
     print("2. Removing images outside RGB capture times")
     print("3. Aligning images")
     print("4. Building dense cloud and mesh")
