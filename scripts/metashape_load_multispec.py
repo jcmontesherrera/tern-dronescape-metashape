@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Script to initialize a Metashape project with RGB and multispectral images in separate chunks.
+Script to initialize a Metashape project with RGB and multispectral images in separate chunks,
+then merge them and prepare for alignment.
 Assumes TERN directory structure:
     <plot>/YYYYMMDD/imagery/
         ├── rgb/level0_raw/
@@ -21,8 +22,8 @@ import Metashape
 
 from metashape.gpu_setup import setup_gpu
 from metashape.utils import find_images
-from metashape.camera_ops import configure_multispectral_camera
-from metashape.processing import detect_reflectance_panels
+from metashape.camera_ops import configure_multispectral_camera, remove_images_outside_rgb_times
+from metashape.processing import detect_reflectance_panels, merge_chunks
 
 def find_filtered_images(folder, extensions=(), exclude_patterns=()):
     """
@@ -139,16 +140,37 @@ def main():
     rgb_chunk.crs = target_crs
     multispec_chunk.crs = target_crs
 
-    # Save project
+    # Save project before merging
     doc.save()
+    print(f"Project saved with separate RGB and multispectral chunks. Project path: {project_path}")
+    
+    #-------------------------------------------
+    # Step 1: Merge chunks into one (RGB into multispec)
+    #-------------------------------------------
+    print("Merging RGB and multispectral chunks...")
+    merged_chunk = merge_chunks(doc, rgb_chunk, multispec_chunk, rgb_images)
+    merged_chunk.label = "all_images"
+    
+    # Save project after merging
+    doc.save()
+    print("Chunks merged successfully into 'all_images' chunk")
+    
+    #-------------------------------------------
+    # Step 2: Remove images outside RGB capture times
+    #-------------------------------------------
+    print("Removing multispectral images outside RGB capture times...")
+    remove_images_outside_rgb_times(merged_chunk)
+    
+    # Save project after filtering images
+    doc.save()
+    print("Removed multispectral images outside RGB capture times")
     print(f"Project saved as {project_path}. Chunk CRS: EPSG::{crs_code}")
-    print("Successfully loaded RGB and multispectral images into separate chunks.")
+    
+    print("Script completed successfully. Project is now ready for alignment.")
     print("Next steps would include:")
-    print("1. Merging the RGB and multispectral chunks")
-    print("2. Removing images outside RGB capture times")
-    print("3. Aligning images")
-    print("4. Building dense cloud and mesh")
-    print("5. Building orthomosaic")
+    print("1. Aligning images")
+    print("2. Building mesh")
+    print("3. Building orthomosaic")
 
 if __name__ == "__main__":
     main() 
