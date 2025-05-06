@@ -143,16 +143,17 @@ def main():
     doc.save()
 
     print("Merging RGB and multispectral chunks...")
-    merged_chunk = merge_chunks(doc, rgb_chunk, multispec_chunk, rgb_images)
+    merged_chunk = doc.mergeChunks(rgb_chunk, multispec_chunk)
     merged_chunk.label = "all_images"
 
+    doc.save()
+
     print(f"Project saved as {project_path}. Chunk CRS: EPSG::{crs_code}")
-    print("Successfully loaded RGB and multispectral images into separate chunks.")
     print("Next steps would include:")
-    print("2. Removing images outside RGB capture times")
-    print("3. Aligning images")
-    print("4. Building dense cloud and mesh")
-    print("5. Building orthomosaic")
+    print("1. Removing images outside RGB capture times")
+    print("2. Aligning images")
+    print("3. Building dense cloud and mesh")
+    print("4. Building orthomosaic")
 
 if __name__ == "__main__":
     main() 
